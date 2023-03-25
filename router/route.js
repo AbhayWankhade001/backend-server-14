@@ -150,10 +150,19 @@ function checkRequiredFields(obj, fields) {
   router.post('/createEmployees', async (req, res) => {
     try {
       const authorizationHeader = req.headers.authorization;
-      if (!authorizationHeader) {
-        throw new Error('Authorization header is missing');
+       let token = null; // Declare and initialize token to null
+  
+      // Check if Authorization header exists
+      if (authorizationHeader) {
+        token = authorizationHeader.split(' ')[1]; // Extract token from header
+      } else if (req.cookies.token) { // Check if token cookie exists
+        token = req.cookies.token; // Extract token from cookie
       }
-      
+  
+      if (!token) {
+        throw new Error('Authorization header or token cookie is missing');
+      }
+  
       const { firstName, lastName, email, password } = req.body;
       if (!checkRequiredFields(req.body, ['firstName', 'lastName', 'email', 'password'])) {
         throw new Error('firstName, lastName, email, and password are required');
@@ -162,7 +171,6 @@ function checkRequiredFields(obj, fields) {
       // Generate password hash using bcrypt
       const passwordHash = await bcrypt.hash(password, 10);
   
-      const token = authorizationHeader.split(' ')[1];
       const tokenData = jwt.verify(token, config.JWT_SECRET, { algorithm: 'HS256' });
       const adminId = tokenData.adminId;
   
@@ -255,8 +263,13 @@ function checkRequiredFields(obj, fields) {
       );
       
   
-  
-      res.send({ token });
+      res.cookie('token', token, { httpOnly: true });
+
+    // Set the token as an Authorization header
+    res.set('Authorization', `Bearer ${token}`);
+    // res.set(token);
+
+    res.send({token, message: 'Employee logged in successfully' });
     } catch (err) {
       console.log('Error:', err.message);
       res.status(400).send({ message: err.message });
@@ -276,12 +289,16 @@ function checkRequiredFields(obj, fields) {
 
 router.get('/employees', async (req, res) => {
   try {
-    const authorizationHeader = req.headers.authorization;
-    if (!authorizationHeader) {
-      throw new Error('Authorization header is missing');
+    let token;
+    const authHeader = req.headers.authorization;
+    const cookies = req.cookies;
+    if (cookies && cookies.token) {
+      token = cookies.token;
+    } else if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
+    } else {
+      throw new Error('Authorization token not found');
     }
-
-    const token = authorizationHeader.split(' ')[1];
     const tokenData = jwt.verify(token, config.JWT_SECRET, { algorithm: 'HS256' });
     const adminId = tokenData.adminId;
 
