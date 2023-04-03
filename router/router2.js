@@ -1,5 +1,5 @@
 import express from "express";
-import User,{Employee , Admin} from "../model/User.model.js";
+import {Employee , Admin} from "../model/User.model.js";
 import nodemailer from "nodemailer"
 
 import config from "./config.js";
@@ -7,6 +7,7 @@ import jwt from 'jsonwebtoken';
 import { BankDetails } from "../model/User.model.js";
 
 import bcrypt from "bcrypt"
+import cryptoRandomString from "crypto-random-string";
 const router2 = express.Router();
 
 
@@ -177,13 +178,12 @@ function checkRequiredFields(obj, fields) {
 
 router2.put('/createEmployees', async (req, res) => {
   try {
-    const authorizationHeader = req.headers.authorization;
+    const token = req.headers.authorization?.split(' ')[1] || req.cookies.token;
     const { newPassword, confirmNewPassword, email } = req.body;
     let employee;
 
-    if (authorizationHeader) {
+    if (token) {
       // if token is present
-      const token = authorizationHeader.split(' ')[1];
       const tokenData = jwt.verify(token, config.JWT_SECRET,  { algorithm: 'HS256' });
       const adminId = tokenData.adminId;
       const employeeId = tokenData.employeeId;
@@ -192,7 +192,7 @@ router2.put('/createEmployees', async (req, res) => {
       console.log('Admin ID:', adminId);
       console.log('Employee ID:', employeeId);
       console.log('Started resetting employee password');
-      console.log('authorizationHeader:', authorizationHeader);
+      console.log('authorizationHeader:', token);
       console.log('token:', token);
       console.log('tokenData:', tokenData);
       console.log('adminId:', adminId);
@@ -252,5 +252,130 @@ router2.put('/createEmployees', async (req, res) => {
     }
   });
   
+  
+  
+  
+  
+let otpInfo = { email: '', otp: '' };
+
+// Route to send OTP to user's email
+router2.post('/forgotPassword/sendOTP', async (req, res) => {
+  try {
+    const { email } = req.body;
+    const employee = await Employee.findOne({ email });
+    if (!employee) {
+      throw new Error('No account found with the provided email');
+    }
+
+    // Check if there is already an OTP in the employee's document
+    if (employee.otp) {
+      employee.otpExpiry = new Date(Date.now() - 1); // Set the OTP's expiry time to a time in the past
+      await employee.save();
+    }
+
+    // Generate OTP
+    const otp = cryptoRandomString({ length: 6 });
+    console.log(otp);
+
+    // Save OTP and its expiry time in employee's document
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // OTP will expire after 10 minutes
+    employee.otp = otp;
+    employee.otpExpiry = otpExpiry;
+    await employee.save();
+
+    // Save email and OTP for verification
+    otpInfo.email = email;
+    otpInfo.otp = otp;
+
+    // Send OTP to employee's email using NodeMailer
+    const mailOptions = {
+      from: config.EMAIL_ADDRESS,
+      to: email,
+      subject: 'Reset your password for Cling Multi Solution',
+      html: `<p>Hello ${employee.firstName},</p>
+             <p>Your OTP for resetting your Cling Multi Solution account password is:</p>
+             <p style="font-size: 24px; font-weight: bold;">${otp}</p>
+             <p>Please use this OTP to reset your password within 10 minutes of receiving this email.</p>
+             <p>Thank you!</p>`,
+    };
+
+    transporter.sendMail(mailOptions, (error, info) => {
+      if (error) {
+        console.log('Error:', error.message);
+        throw new Error('Could not send OTP to the provided email');
+      } else {
+        console.log('Email sent:', info.response);
+        res.send({ message: 'OTP sent successfully' });
+      }
+    });
+  } catch (err) {
+    console.log('Error:', err.message);
+    res.status(400).send({ message: err.message });
+  }
+});
+
+// Route to verify OTP
+router2.post('/forgotPassword/verifyOTP', async (req, res) => {
+  try {
+    const { otp } = req.body;
+
+    // Verify OTP
+    if (otp !== otpInfo.otp || new Date() > otpInfo.otpExpiry) {
+      throw new Error('Invalid or expired OTP');
+    }
+
+    // Retrieve employee with the provided email
+    const employee = await Employee.findOne({ email: otpInfo.email });
+    if (!employee) {
+      throw new Error('No account found with the provided email');
+    }
+
+    // Save credentials in a variable
+    const credentials = { email: otpInfo.email, otp };
+
+    res.send({ message: 'OTP verification successful', credentials });
+  } catch (err) {
+    console.log('Error:', err.message);
+    res.status(400).send({ message: err.message });
+  }
+});
+
+
+
+
+router2.put('/forgotPassword/updatePassword', async (req, res) => {
+  try {
+    const { newPassword } = req.body; // add this line
+    const { email } = otpInfo;
+    const employee = await Employee.findOne({ email });
+    
+    if (!employee) {
+      throw new Error('No account found with the provided email');
+    }
+    
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+
+    employee.password = hashedPassword;
+    await employee.save();
+
+    // Remove OTP and its expiry time from employee's document
+    employee.otp = '';
+    employee.otpExpiry = '';
+    await employee.save();
+
+    // Clear resetCredentials
+    otpInfo = { email: '', otp: '' };
+
+    console.log('Password updated successfully'); // Debugging purposes only
+
+    res.send({ message: 'Password updated successfully' });
+  } catch (err) {
+    console.log('Error:', err.message);
+    res.status(400).send({ message: err.message });
+  }
+});
+
+
   
 export default router2;
