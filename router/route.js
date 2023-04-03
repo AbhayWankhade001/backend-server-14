@@ -259,7 +259,7 @@ function checkRequiredFields(obj, fields) {
       const token = jwt.sign(
         { employeeId: employee._id, adminId: employee.admin },
         config.JWT_SECRET,
-        { expiresIn: '1h' } , { algorithm: 'HS256' }
+        {   expiresIn: '1M'} , { algorithm: 'HS256' }
       );
       
   
